@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 
-const SOCKET_URL = 'http://localhost:5000'; // Khớp với cổng của Backend Node.js
+const SOCKET_URL = 'http://localhost:5000';
 
 class SocketService {
   constructor() {
@@ -25,14 +25,16 @@ class SocketService {
     this.socket.off(eventName);
   }
 
-  // Gửi data cho Gemini phân tích (Chế độ Predict)
   sendFramesForPrediction(frames) {
     this.socket.emit('predict:gesture', { frames, timestamp: new Date().toLocaleTimeString() });
   }
 
-  // Gửi data để lưu file npy (Chế độ Collect)
   sendFramesForCollection(frames, gesture_name, sequence_index) {
     this.socket.emit('collect:gesture', { frames, gesture_name, sequence_index });
+  }
+
+  trainModel() {
+    this.socket.emit('train:model');
   }
 }
 

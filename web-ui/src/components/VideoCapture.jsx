@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import './VideoCapture.css';
+import { socketService } from '../services/socketService';
+import { Camera, Radio, Square, Loader2 } from 'lucide-react';
 
 function VideoCapture({ mode = 'predict' }) {
   const videoRef = useRef(null);
@@ -8,16 +9,17 @@ function VideoCapture({ mode = 'predict' }) {
   const handsRef = useRef(null);
   const frameBufferRef = useRef([]);
   const isRecordingRef = useRef(false);
-  const frameCountRef = useRef(0);
   
   const modeRef = useRef(mode);
 
   const [isLoading, setIsLoading] = useState(true);
   const [frameCount, setFrameCount] = useState(0);
   const [status, setStatus] = useState('Đang khởi tạo AI...');
+  const [isRecording, setIsRecording] = useState(false);
 
   useEffect(() => {
     modeRef.current = mode;
+    stopRecording();
   }, [mode]);
 
   useEffect(() => {
@@ -57,7 +59,7 @@ function VideoCapture({ mode = 'predict' }) {
         cameraRef.current = camera;
         camera.start();
         setIsLoading(false);
-        setStatus('Sẵn sàng');
+        setStatus('Camera Sẵn sàng');
       } catch (error) {
         console.error('Lỗi khởi tạo Camera:', error);
         setStatus('Lỗi tải Camera');
@@ -95,91 +97,129 @@ function VideoCapture({ mode = 'predict' }) {
 
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.save();
+    ctx.scale(-1, 1);
+    ctx.translate(-canvas.width, 0);
     ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-
+    
     if (results.multiHandLandmarks) {
       for (const landmarks of results.multiHandLandmarks) {
-        window.drawConnectors(ctx, landmarks, window.HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
-        window.drawLandmarks(ctx, landmarks, { color: '#FF0000', lineWidth: 1, radius: 3 });
+        window.drawConnectors(ctx, landmarks, window.HAND_CONNECTIONS, { color: '#10b981', lineWidth: 2 });
+        window.drawLandmarks(ctx, landmarks, { color: '#3b82f6', lineWidth: 1, radius: 3 });
       }
     }
+    ctx.restore();
 
     if (isRecordingRef.current) {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const landmarks = extractLandmarks(results);
         frameBufferRef.current.push(landmarks);
-        frameCountRef.current++;
-        setFrameCount(frameCountRef.current);
+        setFrameCount(frameBufferRef.current.length);
 
         if (frameBufferRef.current.length >= 30) {
           const framesToSend = frameBufferRef.current.slice(0, 30);
           
           if (modeRef.current === 'predict') {
-            // NÉM TRỰC TIẾP DATA SANG CHO BẢNG DỊCH NGHĨA
-            window.dispatchEvent(new CustomEvent('frames-predict-ready', { detail: framesToSend }));
+            socketService.sendFramesForPrediction(framesToSend);
             frameBufferRef.current = [];
-            frameCountRef.current = 0;
             setFrameCount(0);
           } else if (modeRef.current === 'collect') {
             window.dispatchEvent(new CustomEvent('frames-ready', { detail: framesToSend }));
-            setStatus('📸 Đã lưu tự động! Đang quay tiếp...');
+            setStatus('📸 Đã gửi! Đang quét tiếp...');
             frameBufferRef.current = [];
-            frameCountRef.current = 0;
             setFrameCount(0);
           }
         }
       } else {
-        setStatus('Đang chờ bạn giơ tay...');
+        setStatus('Đang chờ tay xuất hiện...');
       }
     }
   };
 
   const startRecording = () => {
     isRecordingRef.current = true;
+    setIsRecording(true);
     frameBufferRef.current = [];
-    frameCountRef.current = 0;
     setFrameCount(0);
-    setStatus('Đang chờ bạn giơ tay...');
+    setStatus('Đang chờ tay xuất hiện...');
   };
 
   const stopRecording = () => {
     isRecordingRef.current = false;
-    setStatus('Đã dừng quay');
+    setIsRecording(false);
+    setStatus('Đã tạm dừng');
   };
 
   return (
-    <div className="video-capture-container">
-      <div className="video-wrapper">
-        <video ref={videoRef} className="video-input" style={{ display: 'none' }} />
-        <canvas ref={canvasRef} width={640} height={480} className="video-canvas" />
+    <div className="bg-slate-800 rounded-2xl overflow-hidden shadow-2xl border border-slate-700">
+      <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
+        <video ref={videoRef} className="hidden" />
+        <canvas 
+          ref={canvasRef} 
+          width={640} 
+          height={480} 
+          className="w-full h-full object-cover"
+        />
+        
         {isLoading && (
-          <div className="loading-overlay">
-            <div className="spinner"></div>
-            <p>Đang tải AI...</p>
+          <div className="absolute inset-0 bg-slate-900/80 backdrop-blur flex flex-col items-center justify-center text-slate-300">
+            <Loader2 className="w-10 h-10 animate-spin text-blue-500 mb-4" />
+            <p className="font-medium animate-pulse">Khởi tạo MediaPipe AI...</p>
+          </div>
+        )}
+
+        {isRecording && (
+          <div className="absolute top-4 left-4 flex items-center gap-2 bg-red-500/20 text-red-400 px-3 py-1.5 rounded-full border border-red-500/30 backdrop-blur-sm text-sm font-medium animate-in fade-in">
+            <div className="w-2 h-2 rounded-full bg-red-500 animate-ping"></div>
+            Đang quét
           </div>
         )}
       </div>
       
-      <div className="video-controls">
-        <div className="status-badge" style={{ backgroundColor: mode === 'predict' ? '#3498db' : '#e67e22', color: 'white', padding: '5px 15px', borderRadius: '20px', display: 'inline-block', marginBottom: '10px' }}>
-          {mode === 'predict' 
-            ? (isRecordingRef.current ? '👁️ Đang quét liên tục...' : 'Trạng thái: Tạm dừng') 
-            : status}
+      <div className="p-6 bg-slate-800 border-t border-slate-700">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className={`p-2 rounded-lg ${mode === 'predict' ? 'bg-blue-500/20 text-blue-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+              <Camera className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-sm text-slate-400">Trạng thái Camera</p>
+              <p className="text-sm font-medium text-slate-200">{status}</p>
+            </div>
+          </div>
+          
+          {mode === 'collect' && isRecording && (
+            <div className="flex flex-col items-end">
+              <span className="text-xs text-slate-400 mb-1">Khung hình (30 frames)</span>
+              <div className="w-32 h-2 bg-slate-700 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-emerald-500 transition-all duration-75"
+                  style={{ width: `${(frameCount / 30) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
         
-        {mode === 'collect' && (
-           <div className="frame-counter" style={{ fontWeight: 'bold', marginBottom: '10px' }}>
-             Frames: {frameCount}/30
-           </div>
-        )}
-        
-        <div className="control-buttons">
-          <button onClick={startRecording} style={{ padding: '10px 20px', backgroundColor: '#e74c3c', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', marginRight: '10px', fontWeight: 'bold' }}>
-            {mode === 'predict' ? '🔴 Bật AI Nhận Diện' : '🔴 Bắt Đầu Quay Mẫu'}
-          </button>
-          <button onClick={stopRecording} style={{ padding: '10px 20px', backgroundColor: '#7f8c8d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-            ⏹️ Dừng Lại
-          </button>
+        <div className="flex gap-4">
+          {!isRecording ? (
+            <button 
+              onClick={startRecording}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold transition-all ${mode === 'predict' ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/25' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/25'}`}
+            >
+              <Radio className="w-5 h-5" />
+              {mode === 'predict' ? 'Bật AI Nhận Diện' : 'Bắt Đầu Quay Mẫu'}
+            </button>
+          ) : (
+            <button 
+              onClick={stopRecording}
+              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold bg-slate-700 hover:bg-slate-600 text-slate-200 transition-all"
+            >
+              <Square className="w-5 h-5" />
+              Tạm Dừng
+            </button>
+          )}
         </div>
       </div>
     </div>
